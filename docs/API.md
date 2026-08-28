@@ -38,3 +38,7 @@
 | `resolved` | boolean | 问题已解决 |
 
 接口统一返回 `ApiResponse`；业务冲突使用 HTTP 409，参数错误使用 400，未认证使用 401，无权限使用 403。
+
+## 工单核心 API
+
+`POST /core/helpdesk/tickets` 创建工单；`GET /core/helpdesk/tickets` 查询队列；工单操作分别为 `/assign`、`/respond`、`/wait-customer`、`/resume`、`/resolve`、`/close` 和 `/reopen`。`GET /core/helpdesk/tickets/{id}/timeline` 返回完整事件链，`GET /core/helpdesk/sla-summary` 返回首响与解决违约统计。
