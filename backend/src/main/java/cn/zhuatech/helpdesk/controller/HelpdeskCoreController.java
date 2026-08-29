@@ -14,5 +14,6 @@ import cn.zhuatech.helpdesk.common.ApiResponse;import cn.zhuatech.helpdesk.servi
  @PostMapping("/tickets/{id}/resolve") ApiResponse<HelpdeskCoreService.Ticket> resolve(@PathVariable Long id,@Valid @RequestBody HelpdeskCoreService.ResolveRequest r){return ApiResponse.ok(service.resolve(id,r));}
  @PostMapping("/tickets/{id}/close") ApiResponse<HelpdeskCoreService.Ticket> close(@PathVariable Long id,@Valid @RequestBody HelpdeskCoreService.RemarkRequest r){return ApiResponse.ok(service.close(id,r));}
  @PostMapping("/tickets/{id}/reopen") ApiResponse<HelpdeskCoreService.Ticket> reopen(@PathVariable Long id,@Valid @RequestBody HelpdeskCoreService.RemarkRequest r){return ApiResponse.ok(service.reopen(id,r));}
+ @PostMapping("/tickets/{id}/satisfaction") ApiResponse<HelpdeskCoreService.Ticket> satisfaction(@PathVariable Long id,@Valid @RequestBody HelpdeskCoreService.SatisfactionRequest r){return ApiResponse.ok(service.rate(id,r));}
  @GetMapping("/sla-summary") ApiResponse<HelpdeskCoreService.SlaSummary> summary(){return ApiResponse.ok(service.summary());}
 }

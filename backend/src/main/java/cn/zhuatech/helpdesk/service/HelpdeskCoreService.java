@@ -40,7 +40,13 @@ public class HelpdeskCoreService {
     @Transactional public Ticket close(Long id,RemarkRequest request){Ticket t=getForUpdate(id);if(!"RESOLVED".equals(t.status))throw conflict("仅已解决工单可以关闭");t.closedAt=LocalDateTime.now();t.status="CLOSED";event(t,"CLOSE",request.remark());return t;}
     @Transactional public Ticket reopen(Long id,RemarkRequest request){Ticket t=getForUpdate(id);if(!Set.of("RESOLVED","CLOSED").contains(t.status))throw conflict("仅已解决或已关闭工单可以重开");t.status="IN_PROGRESS";t.resolvedAt=null;t.closedAt=null;t.reopenCount++;t.resolutionDueAt=LocalDateTime.now().plusHours(4);event(t,"REOPEN",request.remark());return t;}
 
-    public SlaSummary summary(){LocalDateTime now=LocalDateTime.now();List<Ticket> all=list(null);long open=all.stream().filter(t->!"CLOSED".equals(t.status)).count();long responseBreached=all.stream().filter(t->t.firstRespondedAt==null&&!terminal(t)&&now.isAfter(t.responseDueAt)).count();long resolutionBreached=all.stream().filter(t->t.resolvedAt==null&&!terminal(t)&&now.isAfter(t.resolutionDueAt)&&t.slaPausedAt==null).count();long p1=all.stream().filter(t->"P1".equals(t.priority)&&!terminal(t)).count();return new SlaSummary(open,responseBreached,resolutionBreached,p1);}
+    @Transactional public Ticket escalate(Long id,EscalationRequest request){Ticket t=getForUpdate(id);requireOpen(t);if(Set.of("RESOLVED","CLOSED").contains(t.status))throw conflict("已解决工单不能升级");if(t.escalationLevel>=3)throw conflict("工单已达到最高升级级别");t.escalationLevel++;t.escalationReason=request.reason();t.escalatedBy=operator();t.escalatedAt=LocalDateTime.now();t.team=request.targetTeam();if(t.escalationLevel>=2)t.priority="P1";event(t,"ESCALATE","L"+t.escalationLevel+" / "+request.targetTeam()+" / "+request.reason());return t;}
+
+    @Transactional public EscalationRun runSlaEscalation(){LocalDateTime now=LocalDateTime.now();List<Ticket> candidates=em.createQuery("select t from HelpdeskTicket t where t.status not in ('RESOLVED','CLOSED') and t.escalationLevel<3 and (t.responseDueAt<:now or (t.resolutionDueAt<:now and t.slaPausedAt is null))",Ticket.class).setParameter("now",now).setLockMode(LockModeType.PESSIMISTIC_WRITE).getResultList();for(Ticket t:candidates){t.escalationLevel++;t.escalationReason="SLA_AUTO_ESCALATION";t.escalatedBy=operator();t.escalatedAt=now;t.team="SLA升级组";if(t.escalationLevel>=2)t.priority="P1";event(t,"AUTO_ESCALATE","SLA逾期自动升级至 L"+t.escalationLevel);}return new EscalationRun(candidates.size(),now);}
+
+    @Transactional public Ticket rate(Long id,SatisfactionRequest request){Ticket t=getForUpdate(id);if(!"CLOSED".equals(t.status))throw conflict("仅已关闭工单可以评价");if(t.satisfactionScore!=null)throw conflict("该工单已完成满意度评价");t.satisfactionScore=request.score();t.satisfactionComment=request.comment();t.ratedAt=LocalDateTime.now();event(t,"SATISFACTION",request.score()+"分 / "+(request.comment()==null?"":request.comment()));return t;}
+
+    public SlaSummary summary(){LocalDateTime now=LocalDateTime.now();List<Ticket> all=list(null);long open=all.stream().filter(t->!"CLOSED".equals(t.status)).count();long responseBreached=all.stream().filter(t->t.firstRespondedAt==null&&!terminal(t)&&now.isAfter(t.responseDueAt)).count();long resolutionBreached=all.stream().filter(t->t.resolvedAt==null&&!terminal(t)&&now.isAfter(t.resolutionDueAt)&&t.slaPausedAt==null).count();long p1=all.stream().filter(t->"P1".equals(t.priority)&&!terminal(t)).count();long escalated=all.stream().filter(t->t.escalationLevel>0&&!terminal(t)).count();var scores=all.stream().filter(t->t.satisfactionScore!=null).mapToInt(t->t.satisfactionScore).summaryStatistics();return new SlaSummary(open,responseBreached,resolutionBreached,p1,escalated,scores.getCount(),scores.getCount()==0?0:scores.getAverage());}
 
     private List<Ticket> findByNo(String no){return em.createQuery("select t from HelpdeskTicket t where t.ticketNo=:no",Ticket.class).setParameter("no",no).getResultList();}
     private Ticket get(Long id){Ticket t=em.find(Ticket.class,id);if(t==null)throw new ResponseStatusException(HttpStatus.NOT_FOUND,"工单不存在");return t;}
@@ -58,7 +64,10 @@ public class HelpdeskCoreService {
     public record AssignRequest(@NotBlank @Size(max=80) String team,@NotBlank @Size(max=80) String assignee){}
     public record RemarkRequest(@NotBlank @Size(max=500) String remark){}
     public record ResolveRequest(@NotBlank @Size(max=1000) String resolution){}
-    public record SlaSummary(long open,long responseBreached,long resolutionBreached,long openP1){}
+    public record EscalationRequest(@NotBlank @Size(max=80) String targetTeam,@NotBlank @Size(max=500) String reason){}
+    public record SatisfactionRequest(@Min(1) @Max(5) int score,@Size(max=500) String comment){}
+    public record EscalationRun(int escalatedTickets,LocalDateTime executedAt){}
+    public record SlaSummary(long open,long responseBreached,long resolutionBreached,long openP1,long escalated,long rated,double averageSatisfaction){}
 
     @Entity(name="HelpdeskTicket") @Table(name="helpdesk_tickets",uniqueConstraints=@UniqueConstraint(columnNames="ticketNo"))
     public static class Ticket{
@@ -69,7 +78,7 @@ public class HelpdeskCoreService {
         @Column(nullable=false,length=30) public String status;@Column(length=1000) public String resolution;
         @Column(nullable=false) public LocalDateTime reportedAt;@Column(nullable=false) public LocalDateTime responseDueAt;@Column(nullable=false) public LocalDateTime resolutionDueAt;
         public LocalDateTime firstRespondedAt;public LocalDateTime resolvedAt;public LocalDateTime closedAt;public LocalDateTime slaPausedAt;
-        public long pausedMinutes;public int reopenCount;@Version public long version;
+        public long pausedMinutes;public int reopenCount;public int escalationLevel;@Column(length=500)public String escalationReason;@Column(length=80)public String escalatedBy;public LocalDateTime escalatedAt;public Integer satisfactionScore;@Column(length=500)public String satisfactionComment;public LocalDateTime ratedAt;@Version public long version;
         protected Ticket(){}
         Ticket(String no,String requester,String category,String priority,String subject,LocalDateTime reported,LocalDateTime responseDue,LocalDateTime resolutionDue){this.ticketNo=no;this.requester=requester;this.category=category;this.priority=priority;this.subject=subject;this.reportedAt=reported;this.responseDueAt=responseDue;this.resolutionDueAt=resolutionDue;this.status="NEW";}
         public boolean isResponseBreached(){return firstRespondedAt==null&&LocalDateTime.now().isAfter(responseDueAt);}

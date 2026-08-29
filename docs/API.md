@@ -42,3 +42,5 @@
 ## 工单核心 API
 
 `POST /core/helpdesk/tickets` 创建工单；`GET /core/helpdesk/tickets` 查询队列；工单操作分别为 `/assign`、`/respond`、`/wait-customer`、`/resume`、`/resolve`、`/close` 和 `/reopen`。`GET /core/helpdesk/tickets/{id}/timeline` 返回完整事件链，`GET /core/helpdesk/sla-summary` 返回首响与解决违约统计。
+
+管理员可使用 `POST /admin/core/helpdesk/escalations/run` 扫描 SLA 违约并自动升级，或通过 `/admin/core/helpdesk/tickets/{id}/escalate` 人工升级；关闭后的工单使用 `POST /core/helpdesk/tickets/{id}/satisfaction` 提交一次性满意度评价。
